@@ -13,7 +13,7 @@ macOS only offers a handful of built-in Magic Mouse gestures. MagicGestures is a
 ## Install
 
 ```sh
-git clone <this repository>
+git clone https://github.com/ibretsam/MagicGestures.git
 cd MagicGestures
 sh install.sh
 ```
