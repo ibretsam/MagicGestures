@@ -12,7 +12,7 @@ import SwiftUI
 struct Action: Codable {
     var keys: String?    // "cmd+shift+t"
     var shell: String?   // any /bin/sh command
-    var click: String?   // "middle"
+    var click: String?   // left | right | middle
     var media: String?   // playpause | next | previous | volumeup | volumedown | mute (volume keys also take "-fine")
     var stepMM: Double?  // edge slides only: finger travel per repeat (overrides edgeStepMM)
 }
@@ -174,12 +174,33 @@ func sendMedia(_ name: String) {
     }
 }
 
+var lastTapClick = (time: 0.0, pos: CGPoint.zero, count: 0)
+var lastSyntheticClick = 0.0
+
+/// Clicks at the pointer. Left clicks made in quick succession on the same spot count
+/// up as double and triple clicks, the way physical clicks do.
 func sendClick(_ name: String) {
-    guard name.lowercased() == "middle" else { log("unknown click \"\(name)\""); return }
+    let types: (CGEventType, CGEventType, CGMouseButton)
+    switch name.lowercased() {
+    case "left": types = (.leftMouseDown, .leftMouseUp, .left)
+    case "right": types = (.rightMouseDown, .rightMouseUp, .right)
+    case "middle": types = (.otherMouseDown, .otherMouseUp, .center)
+    default: log("unknown click \"\(name)\""); return
+    }
     let pos = CGEvent(source: nil)?.location ?? .zero
-    for type in [CGEventType.otherMouseDown, .otherMouseUp] {
-        CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: pos, mouseButton: .center)?
-            .post(tap: .cghidEventTap)
+    let now = CACurrentMediaTime()
+    var count = 1
+    if types.2 == .left {
+        let near = hypot(pos.x - lastTapClick.pos.x, pos.y - lastTapClick.pos.y) < 6
+        if near, now - lastTapClick.time < NSEvent.doubleClickInterval { count = min(lastTapClick.count + 1, 3) }
+        lastTapClick = (now, pos, count)
+    }
+    lastSyntheticClick = now
+    let src = CGEventSource(stateID: .combinedSessionState)   // carries held modifier keys, e.g. Cmd-click
+    for type in [types.0, types.1] {
+        let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: pos, mouseButton: types.2)
+        e?.setIntegerValueField(.mouseEventClickState, value: Int64(count))
+        e?.post(tap: .cghidEventTap)
     }
 }
 
@@ -224,16 +245,20 @@ var onGesture: ((String, Bool) -> Void)?
 func mouseButtonActive() -> Bool {
     if CGEventSource.buttonState(.combinedSessionState, button: .left) { return true }
     if CGEventSource.buttonState(.combinedSessionState, button: .right) { return true }
+    // A click we sent ourselves for a tap must not make the next tap look like a physical click.
+    if CACurrentMediaTime() - lastSyntheticClick < 0.6 { return false }
     let l = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .leftMouseDown)
     let r = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .rightMouseDown)
     return min(l, r) < 0.4
 }
 
 func fire(_ names: [String], at ts: Double) {
-    guard ts - lastFireTime >= config.settings.cooldownSeconds else { return }
+    let bound = names.first { config.gestures[$0] != nil }
+    // Taps bound to a click skip the cooldown, so a double-tap is a double-click.
+    let isClick = bound.flatMap { config.gestures[$0]?.click } != nil
+    guard isClick || ts - lastFireTime >= config.settings.cooldownSeconds else { return }
     lastFireTime = ts
     sessionFired = true
-    let bound = names.first { config.gestures[$0] != nil }
     log("gesture \(names[0])" + (bound == nil ? " (unbound)" : " -> \(bound!)"))
     onGesture?(names[0], bound != nil)
     if let capture = captureGesture { capture(names[0]); return }
@@ -734,7 +759,7 @@ func actionSummary(_ a: Action) -> String {
     if let k = a.keys { parts.append("Shortcut: \(k)") }
     if let m = a.media { parts.append(mediaOptions.first { $0.id == m.lowercased() }?.label ?? "Media: \(m)") }
     if let s = a.shell { parts.append("Run: \(s)") }
-    if a.click != nil { parts.append("Middle click") }
+    if let c = a.click { parts.append("\(c.capitalized) click") }
     return parts.isEmpty ? "No action" : parts.joined(separator: " + ")
 }
 
@@ -778,7 +803,7 @@ final class SettingsModel: ObservableObject {
 }
 
 enum ActionKind: String, CaseIterable, Identifiable {
-    case keys = "Shortcut", media = "Media Key", shell = "Command", click = "Middle Click"
+    case keys = "Shortcut", media = "Media Key", shell = "Command", click = "Mouse Click"
     var id: String { rawValue }
 }
 
@@ -790,6 +815,7 @@ struct EditorState: Identifiable {
     var keys = ""
     var media = "playpause"
     var shell = ""
+    var click = "left"
     var stepMM = 2.5
 
     init(adding used: Set<String>) {
@@ -800,7 +826,7 @@ struct EditorState: Identifiable {
         if let k = a.keys { kind = .keys; keys = k }
         else if let m = a.media { kind = .media; media = m.lowercased() }
         else if let s = a.shell { kind = .shell; shell = s }
-        else if a.click != nil { kind = .click }
+        else if let c = a.click { kind = .click; click = c.lowercased() }
         stepMM = a.stepMM ?? config.settings.edgeStepMM
     }
 
@@ -822,7 +848,7 @@ struct EditorState: Identifiable {
         case .keys: a.keys = keys.lowercased()
         case .media: a.media = media
         case .shell: a.shell = shell
-        case .click: a.click = "middle"
+        case .click: a.click = click
         }
         if isEdge { a.stepMM = stepMM }
         return a
@@ -882,7 +908,13 @@ struct EditorView: View {
                     case .shell:
                         TextField("Command", text: $s.shell, prompt: Text("e.g. open -a Safari"))
                     case .click:
-                        Text("Clicks the middle mouse button at the pointer.").foregroundStyle(.secondary)
+                        Picker("Button", selection: $s.click) {
+                            Text("Left click").tag("left")
+                            Text("Right click").tag("right")
+                            Text("Middle click").tag("middle")
+                        }
+                        Text("Clicks at the pointer. Quick repeated left clicks count as double-clicks.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     if s.isEdge {
                         HStack {

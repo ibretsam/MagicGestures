@@ -1,24 +1,46 @@
 {
+  "gestures": {
+    "edge-left-down": {
+      "media": "volumedown-fine",
+      "stepMM": 2.5
+    },
+    "edge-left-up": {
+      "media": "volumeup-fine",
+      "stepMM": 2.5
+    },
+    "swipe3-down": {
+      "keys": "ctrl+down"
+    },
+    "swipe3-left": {
+      "keys": "cmd+shift+["
+    },
+    "swipe3-right": {
+      "keys": "cmd+shift+]"
+    },
+    "swipe3-up": {
+      "keys": "f11"
+    },
+    "tap1": {
+      "click": "left"
+    },
+    "tap1-right": {
+      "click": "right"
+    },
+    "tap3": {
+      "keys": "ctrl+up"
+    }
+  },
   "settings": {
-    "tapMaxSeconds": 0.25,
-    "tapMaxMoveMM": 2.5,
+    "cooldownSeconds": 0.3,
+    "edgeAcceleration": 1.0,
+    "edgeMomentum": 0.15,
+    "edgeStartMM": 3,
+    "edgeStepMM": 5,
+    "edgeZoneWidth": 0.18,
+    "middleZoneWidth": 0.1,
     "swipeMinMM": 10,
     "swipeWindowSeconds": 0.35,
-    "cooldownSeconds": 0.3,
-    "middleZoneWidth": 0.2,
-    "edgeZoneWidth": 0.18,
-    "edgeStepMM": 5,
-    "edgeStartMM": 3,
-    "edgeAcceleration": 1.0,
-    "edgeMomentum": 0.15
-  },
-  "gestures": {
-    "edge-left-up":   { "media": "volumeup-fine", "stepMM": 2.5 },
-    "edge-left-down": { "media": "volumedown-fine", "stepMM": 2.5 },
-    "tap3":         { "keys": "ctrl+up" },
-    "swipe3-up":    { "keys": "f11" },
-    "swipe3-down":  { "keys": "ctrl+down" },
-    "swipe3-left":  { "keys": "cmd+shift+[" },
-    "swipe3-right": { "keys": "cmd+shift+]" }
+    "tapMaxMoveMM": 2.5,
+    "tapMaxSeconds": 0.25
   }
 }

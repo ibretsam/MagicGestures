@@ -2,7 +2,7 @@
 
 Custom gestures for the Apple Magic Mouse on macOS.
 
-macOS only offers a handful of built-in Magic Mouse gestures. MagicGestures is a small menu bar app that reads the raw touches on the mouse's surface, recognises taps, swipes and edge slides, and runs whatever action you bind to them: a keyboard shortcut, a media key, a shell command or a middle click.
+macOS only offers a handful of built-in Magic Mouse gestures. MagicGestures is a small menu bar app that reads the raw touches on the mouse's surface, recognises taps, swipes and edge slides, and runs whatever action you bind to them: a keyboard shortcut, a media key, a shell command or a mouse click.
 
 ## Requirements
 
@@ -86,6 +86,7 @@ Things to know when choosing gestures:
 - A two-finger tap also fires on the first tap of the system's two-finger double-tap.
 - One-finger taps are the easiest to trigger by accident.
 - A tap is ignored if a mouse button was clicked during or just before it.
+- Tap to click: the system's one-finger double-tap (Smart zoom) still fires alongside a double-tap click. Turn it off in System Settings > Mouse if it gets in the way. Tap-and-drag is not supported; press the button to drag.
 
 ### Actions
 
@@ -94,7 +95,7 @@ Things to know when choosing gestures:
 | Keyboard shortcut | `{ "keys": "cmd+shift+t" }` | Modifiers: `cmd`, `ctrl`, `opt`, `shift`, `fn`. Keys: letters, digits, punctuation, `up` `down` `left` `right`, `f1`–`f12`, `space`, `tab`, `return`, `escape`, `delete`, `home`, `end`, `pageup`, `pagedown`. |
 | Media key | `{ "media": "playpause" }` | `playpause`, `next`, `previous`, `volumeup`, `volumedown`, `mute`. `volumeup-fine` and `volumedown-fine` move in quarter steps. |
 | Shell command | `{ "shell": "open -a Safari" }` | Run with `/bin/sh -c`. |
-| Middle click | `{ "click": "middle" }` | Clicks at the pointer. |
+| Mouse click | `{ "click": "left" }` | `left`, `right` or `middle`, at the pointer. Quick repeated left clicks count as double- and triple-clicks. |
 
 Edge slide bindings can also set `"stepMM"`, the finger travel per repeat, which overrides `edgeStepMM` for that edge.
 
@@ -104,6 +105,7 @@ Edge slide bindings can also set `"stepMM"`, the finger travel per repeat, which
 
 | Gesture | Action |
 |---|---|
+| One-finger tap | Left click, or right click when tapped on the right side (tap to click) |
 | Left edge, slide up / down | Volume up / down in fine steps, one step per 2.5 mm |
 | Three-finger tap | Mission Control (`ctrl+up`) |
 | Three-finger swipe up | Show Desktop (`f11`) |
