@@ -29,6 +29,7 @@ struct Settings: Codable {
     var edgeStartMM = 3.0          // travel needed before an edge slide starts (ignores a resting finger)
     var edgeAcceleration = 1.0     // how much faster movement counts for more (0 = strictly linear)
     var edgeMomentum = 0.15        // seconds a flick keeps coasting after the finger lifts (0 = off)
+    var tapAndDrag = true          // tap, then touch again and hold, to drag
 
     init() {}
     init(from d: Decoder) throws {
@@ -45,6 +46,7 @@ struct Settings: Codable {
         edgeStartMM = try c.decodeIfPresent(Double.self, forKey: .edgeStartMM) ?? def.edgeStartMM
         edgeAcceleration = try c.decodeIfPresent(Double.self, forKey: .edgeAcceleration) ?? def.edgeAcceleration
         edgeMomentum = try c.decodeIfPresent(Double.self, forKey: .edgeMomentum) ?? def.edgeMomentum
+        tapAndDrag = try c.decodeIfPresent(Bool.self, forKey: .tapAndDrag) ?? def.tapAndDrag
     }
 }
 
@@ -71,7 +73,8 @@ let defaultConfigText = """
     "edgeStepMM": 5,
     "edgeStartMM": 3,
     "edgeAcceleration": 1.0,
-    "edgeMomentum": 0.15
+    "edgeMomentum": 0.15,
+    "tapAndDrag": true
   },
   "gestures": {
     "edge-left-up":   { "media": "volumeup-fine", "stepMM": 2.5 },
@@ -204,6 +207,60 @@ func sendClick(_ name: String) {
     }
 }
 
+// Tap and drag: tap once (a left click), then touch again and keep the finger down.
+// The left button is held for as long as the finger stays on the mouse, so moving the
+// mouse drags; lifting the finger drops.
+var dragCandidate = false    // second touch after a tap-click; becomes a drag if it stays down
+var dragActive = false
+var dragTap: CFMachPort?
+var dragWatch: Timer?
+
+/// While we hold the button down, the mouse still reports plain "moved" events;
+/// apps only drag on "dragged" events, so they are converted here.
+let dragTapCallback: CGEventTapCallBack = { _, type, event, _ in
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        if dragActive, let t = dragTap { CGEvent.tapEnable(tap: t, enable: true) }
+        return Unmanaged.passUnretained(event)
+    }
+    if dragActive, type == .mouseMoved { event.type = .leftMouseDragged }
+    return Unmanaged.passUnretained(event)
+}
+
+func postLeftButton(_ type: CGEventType) {
+    let pos = CGEvent(source: nil)?.location ?? .zero
+    let e = CGEvent(mouseEventSource: CGEventSource(stateID: .combinedSessionState), mouseType: type,
+                    mouseCursorPosition: pos, mouseButton: .left)
+    e?.setIntegerValueField(.mouseEventClickState, value: 1)
+    e?.post(tap: .cghidEventTap)
+    lastSyntheticClick = CACurrentMediaTime()
+}
+
+func beginDrag() {
+    dragCandidate = false
+    guard !dragActive, let tap = dragTap else { return }
+    dragActive = true
+    sessionFired = true      // this touch is a drag, not a tap or swipe
+    edgeSide = nil
+    postLeftButton(.leftMouseDown)
+    CGEvent.tapEnable(tap: tap, enable: true)
+    log("drag started")
+    onGesture?("tap-and-drag", true)
+    // Safety net: never leave the button held if the mouse stops reporting (e.g. it disconnects).
+    dragWatch = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+        if CACurrentMediaTime() - lastFrameWall > 2 { endDrag() }
+    }
+}
+
+func endDrag() {
+    guard dragActive else { return }
+    dragActive = false
+    dragWatch?.invalidate(); dragWatch = nil
+    if let t = dragTap { CGEvent.tapEnable(tap: t, enable: false) }
+    postLeftButton(.leftMouseUp)
+    lastTapClick.time = 0    // the next tap starts fresh, not as a double-click
+    log("drag ended")
+}
+
 func run(_ a: Action) {
     if let k = a.keys { sendKeys(k) }
     if let m = a.media { sendMedia(m) }
@@ -243,6 +300,7 @@ var surfaceWidthMM = 51.5
 var onGesture: ((String, Bool) -> Void)?
 
 func mouseButtonActive() -> Bool {
+    if dragActive { return false }   // the held button is ours
     if CGEventSource.buttonState(.combinedSessionState, button: .left) { return true }
     if CGEventSource.buttonState(.combinedSessionState, button: .right) { return true }
     // A click we sent ourselves for a tap must not make the next tap look like a physical click.
@@ -344,10 +402,19 @@ func installScrollTap() {
     CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, tap, 0), .commonModes)
     CGEvent.tapEnable(tap: tap, enable: true)
     log("scroll blocking for edge slides is active")
+    if let d = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+                                 eventsOfInterest: CGEventMask(1 << CGEventType.mouseMoved.rawValue),
+                                 callback: dragTapCallback, userInfo: nil) {
+        dragTap = d
+        CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, d, 0), .commonModes)
+        CGEvent.tapEnable(tap: d, enable: false)   // only switched on during a drag
+    }
 }
 
 func endSession(at ts: Double) {
+    endDrag()   // lifting the finger drops whatever was being dragged
     defer {
+        dragCandidate = false
         if edgeUsed { momentumBlockUntil = CACurrentMediaTime() + 1.5 }
         // A finger that was still moving when it lifted is a flick: coast on.
         if let side = edgeSide, edgeEngaged, ts - edgeLastT < 0.06, abs(edgeVel) > 60 {
@@ -391,6 +458,18 @@ func process(_ touches: [Touch], _ ts: Double) {
         edgeSide = nil; edgeUsed = false; edgeEngaged = false
         stopMomentum()   // touching the mouse again stops a coasting flick
         edgeLastY = active[0].y; edgeLastT = ts; edgeVel = 0; edgeAccum = 0
+        // A touch right after a tap-click, with the pointer still on the same spot, may be a drag.
+        dragCandidate = false
+        let pointer = CGEvent(source: nil)?.location ?? .zero
+        if s.tapAndDrag, !paused, captureGesture == nil, active.count == 1,
+           CACurrentMediaTime() - lastTapClick.time < 0.4,
+           hypot(pointer.x - lastTapClick.pos.x, pointer.y - lastTapClick.pos.y) < 6 {
+            dragCandidate = true
+            // Frames normally decide this, but make sure a perfectly still finger still starts the drag.
+            DispatchQueue.main.asyncAfter(deadline: .now() + s.tapMaxSeconds + 0.03) {
+                if dragCandidate, sessionStart == ts { beginDrag() }
+            }
+        }
         if !paused, active.count == 1 {
             func bound(_ side: String) -> Bool {
                 config.gestures["edge-\(side)-up"] != nil || config.gestures["edge-\(side)-down"] != nil
@@ -422,6 +501,17 @@ func process(_ touches: [Touch], _ ts: Double) {
         lastCount = active.count
     }
     sessionMaxFingers = max(sessionMaxFingers, active.count)
+
+    if dragCandidate {
+        let pointer = CGEvent(source: nil)?.location ?? .zero
+        let pointerMoved = hypot(pointer.x - lastTapClick.pos.x, pointer.y - lastTapClick.pos.y) > 4
+        if active.count != 1 || sessionClicked || sessionMaxMove > s.tapMaxMoveMM {
+            dragCandidate = false   // a click, a second finger, or a scroll: not a drag
+        } else if ts - (sessionStart ?? ts) > s.tapMaxSeconds || pointerMoved {
+            beginDrag()             // held past tap time, or the mouse started moving
+        }
+    }
+    if dragActive { return }
 
     if let side = edgeSide {
         let t = active[0]
@@ -1057,6 +1147,14 @@ struct SettingsView: View {
                       value: $model.settings.swipeMinMM, range: 5...25, step: 0.5, format: "%.1f mm", commit: model.save)
             TuningRow(title: "Tap time", help: "The longest a touch can last and still count as a tap.",
                       value: $model.settings.tapMaxSeconds, range: 0.1...0.5, step: 0.01, format: "%.2f s", commit: model.save)
+            Toggle(isOn: Binding(get: { model.settings.tapAndDrag },
+                                 set: { model.settings.tapAndDrag = $0; model.save() })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Tap and drag")
+                    Text("Tap, then touch again and keep the finger down to drag. Lift to drop.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Spacer()
             Button("Restore Defaults") { model.settings = Settings(); model.save() }
         }
@@ -1131,6 +1229,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let accessLine = NSMenuItem(title: "", action: #selector(openAccessibility), keyEquivalent: "")
     let pauseItem = NSMenuItem(title: "Pause", action: #selector(togglePause), keyEquivalent: "")
 
+    func applicationWillTerminate(_ n: Notification) { endDrag() }
+
     func applicationDidFinishLaunching(_ n: Notification) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = NSImage(systemSymbolName: "hand.tap", accessibilityDescription: "MagicGestures")
@@ -1187,6 +1287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func togglePause() {
         paused.toggle()
+        endDrag()
         pauseItem.title = paused ? "Resume" : "Pause"
         item.button?.appearsDisabled = paused
     }

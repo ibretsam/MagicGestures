@@ -86,7 +86,7 @@ Things to know when choosing gestures:
 - A two-finger tap also fires on the first tap of the system's two-finger double-tap.
 - One-finger taps are the easiest to trigger by accident.
 - A tap is ignored if a mouse button was clicked during or just before it.
-- Tap to click: the system's one-finger double-tap (Smart zoom) still fires alongside a double-tap click. Turn it off in System Settings > Mouse if it gets in the way. Tap-and-drag is not supported; press the button to drag.
+- Tap to click: the system's one-finger double-tap (Smart zoom) still fires alongside a double-tap click. Turn it off in System Settings > Mouse if it gets in the way.
 
 ### Actions
 
@@ -98,6 +98,16 @@ Things to know when choosing gestures:
 | Mouse click | `{ "click": "left" }` | `left`, `right` or `middle`, at the pointer. Quick repeated left clicks count as double- and triple-clicks. |
 
 Edge slide bindings can also set `"stepMM"`, the finger travel per repeat, which overrides `edgeStepMM` for that edge.
+
+### Tap and drag
+
+With a one-finger tap bound to a left click, you can drag without pressing the button:
+
+1. Tap once on the thing you want to drag.
+2. Straight away, touch the mouse again and keep your finger down.
+3. Move the mouse to drag. Lift your finger to drop.
+
+The drag starts once the second touch has lasted longer than a tap, or as soon as the mouse moves. A quick second tap is still a double-click. Turn this off with the "Tap and drag" switch in Settings → Tuning.
 
 ## The gestures in this repository
 
@@ -131,6 +141,7 @@ Everything is stored in `~/.config/magicgestures/config.json`. The Settings wind
 | `edgeStartMM` | 3 | Movement needed before an edge slide begins |
 | `edgeAcceleration` | 1.0 | How much faster movement counts for more; 0 is strictly linear |
 | `edgeMomentum` | 0.15 | Seconds a flick keeps coasting; 0 turns it off |
+| `tapAndDrag` | true | Tap, then touch again and hold, to drag |
 
 ## Touch viewer
 
