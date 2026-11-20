@@ -49,6 +49,7 @@ MagicGestures lives in the menu bar as a hand icon. Its menu has:
 | Settings… | Opens the window for adding, editing and removing gestures, and for tuning. |
 | Show Touch Viewer | Opens a live top-down view of the mouse showing each finger as you touch it. |
 | Reset Viewer Outline | Starts the viewer's learned mouse outline over. |
+| Reconnect Mouse | Re-attaches to the mouse's touch data, if gestures stop responding. |
 | Pause / Resume | Stops actions from running without quitting. |
 | Edit Config… | Opens the config file in TextEdit. |
 | Reload Config | Re-reads the config file. It is also re-read automatically within a few seconds of a change. |
@@ -152,7 +153,7 @@ The mouse reports touches as a plain rectangle, but its ends are rounded, so the
 ## Troubleshooting
 
 - **Gestures are recognised but nothing happens.** Accessibility access is missing. Check the menu for the warning line.
-- **Nothing is recognised.** Check the menu says "Magic Mouse connected", and look at the log.
+- **Nothing is recognised.** Check the menu says "Magic Mouse connected", and look at the log. If gestures stop after the Mac sleeps or the mouse reconnects, choose **Reconnect Mouse** from the menu; the app also reconnects by itself on wake and within a minute of touches going quiet.
 - **A gesture misfires or is hard to trigger.** Adjust the sliders in Settings → Tuning.
 - **Log file:** `~/Library/Logs/MagicGestures.log` records every recognised gesture and config load. Run `/Applications/MagicGestures.app/Contents/MacOS/MagicGestures --debug` from a terminal to also print raw touch data.
 

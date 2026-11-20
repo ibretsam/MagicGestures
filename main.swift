@@ -566,6 +566,7 @@ let MTRegisterContactFrameCallback = mtSym("MTRegisterContactFrameCallback", (@c
 let MTUnregisterContactFrameCallback = mtSym("MTUnregisterContactFrameCallback", (@convention(c) (MTDev, MTFrameCallback) -> Void).self)
 let MTDeviceStart = mtSym("MTDeviceStart", (@convention(c) (MTDev, Int32) -> Int32).self)
 let MTDeviceStop = mtSym("MTDeviceStop", (@convention(c) (MTDev) -> Int32).self)
+let MTDeviceIsRunning = mtSym("MTDeviceIsRunning", (@convention(c) (MTDev) -> Bool).self)
 
 var surfaceMM = (w: 51.5, h: 90.5)
 
@@ -590,7 +591,14 @@ var devices: [AnyObject] = []   // keeps the registered devices alive
 var deviceIDs: Set<UInt64> = []
 
 /// Finds Magic Mice (external devices with a portrait sensor) and (re)registers when the set changes.
-func scanDevices() {
+var lastDeviceRefresh = 0.0
+
+/// A registration can go dead without the device list changing: when the mouse drops and
+/// rejoins around sleep it comes back with the same ID, but the object we registered on no
+/// longer delivers touches. So besides watching the list, this re-registers when the held
+/// device reports it is no longer running, when asked to (`force`, used on wake),
+/// and once a minute while no touches are arriving.
+func scanDevices(force: Bool = false) {
     guard let create = MTDeviceCreateList, let reg = MTRegisterContactFrameCallback, let start = MTDeviceStart,
           let list = create()?.takeRetainedValue() as? [AnyObject] else { return }
     var found: [(AnyObject, UInt64)] = []
@@ -606,7 +614,15 @@ func scanDevices() {
         }
     }
     let ids = Set(found.map { $0.1 })
-    guard ids != deviceIDs || found.count != devices.count else { return }
+    let now = CACurrentMediaTime()
+    let changed = ids != deviceIDs || found.count != devices.count
+    let stale = devices.contains { d in
+        let dev = Unmanaged.passUnretained(d).toOpaque()
+        return MTDeviceIsRunning?(dev) == false
+    }
+    let idle = !devices.isEmpty && !dragActive && now - lastFrameWall > 60 && now - lastDeviceRefresh > 60
+    guard force || changed || stale || idle else { return }
+    lastDeviceRefresh = now
     for d in devices {
         let dev = Unmanaged.passUnretained(d).toOpaque()
         MTUnregisterContactFrameCallback?(dev, frameCallback)
@@ -617,9 +633,13 @@ func scanDevices() {
     for d in devices {
         let dev = Unmanaged.passUnretained(d).toOpaque()
         reg(dev, frameCallback)
-        _ = start(dev, 0)
+        let result = start(dev, 0)
+        if result != 0 { log("could not start the Magic Mouse touch stream (error \(result))") }
     }
-    log(devices.isEmpty ? "no Magic Mouse connected" : "listening to \(devices.count) Magic Mouse device(s)")
+    if changed || stale || force {   // the quiet once-a-minute refresh isn't worth a log line
+        let why = changed ? "" : (stale ? " (connection had gone stale, reconnected)" : " (reconnected)")
+        log(devices.isEmpty ? "no Magic Mouse connected" : "listening to \(devices.count) Magic Mouse device(s)\(why)")
+    }
     onDevicesChanged?(devices.count)
 }
 var onDevicesChanged: ((Int) -> Void)?
@@ -1231,6 +1251,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ n: Notification) { endDrag() }
 
+    @objc func reconnectMouse() { scanDevices(force: true) }
+
+    /// The mouse rejoins a little after the Mac wakes, so reconnect a few times.
+    @objc func didWake() {
+        for delay in [1.0, 5.0, 15.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { scanDevices(force: true) }
+        }
+    }
+
     func applicationDidFinishLaunching(_ n: Notification) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = NSImage(systemSymbolName: "hand.tap", accessibilityDescription: "MagicGestures")
@@ -1239,6 +1268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ","),
                   NSMenuItem(title: "Show Touch Viewer", action: #selector(showViewer), keyEquivalent: ""),
                   NSMenuItem(title: "Reset Viewer Outline", action: #selector(resetOutline), keyEquivalent: ""),
+                  NSMenuItem(title: "Reconnect Mouse", action: #selector(reconnectMouse), keyEquivalent: ""),
                   pauseItem,
                   NSMenuItem(title: "Edit Config…", action: #selector(editConfig), keyEquivalent: ""),
                   NSMenuItem(title: "Reload Config", action: #selector(reload), keyEquivalent: ""),
@@ -1255,6 +1285,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.touchView.gestureTime = Date()
             self?.touchView.needsDisplay = true
         }
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake),
+                                                          name: NSWorkspace.didWakeNotification, object: nil)
         if CommandLine.arguments.contains("--viewer") { showViewer() }
         installEditMenu()
         if CommandLine.arguments.contains("--settings") { showSettings() }
